@@ -2,6 +2,8 @@ import importlib.util
 import math
 import sys
 import types
+import tempfile
+from unittest.mock import patch
 import unittest
 from pathlib import Path
 
@@ -13,9 +15,11 @@ NODES_PATH = ROOT / "nodes.py"
 class FakeLLM:
     def __init__(self):
         self.calls = 0
+        self.requests = []
 
     def create_chat_completion(self, **kwargs):
         self.calls += 1
+        self.requests.append(kwargs)
         return {"choices": [{"message": {"content": f"prompt-{self.calls}"}}]}
 
 
@@ -148,6 +152,55 @@ class InstructCacheBehaviorTests(unittest.TestCase):
         }
         data.update(overrides)
         return self.node.process(**data)
+
+    def test_image_analysis_survives_new_model_and_instruction_changes(self):
+        class FakeImage:
+            def cpu(self): return self
+            def numpy(self): return self
+            def squeeze(self): return self
+            def __rmul__(self, value): return self
+            def astype(self, dtype): return self
+
+        image = FakeImage()
+        cache_module = sys.modules[f"{self.nodes.__package__}.support.image_analysis_cache"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "LLM").mkdir()
+            (root / "LLM" / "model.gguf").write_bytes(b"model")
+            (root / "LLM" / "vision.gguf").write_bytes(b"vision")
+            with patch.object(cache_module, "CACHE_DIR", root / "cache"), patch.object(self.nodes.folder_paths, "models_dir", str(root)), patch.object(self.nodes, "image2base64", return_value="image-one") as encode:
+                kwargs = dict(images=[image], inference_mode="images", cache_image_analysis=True,
+                              llama_model={"model": "model.gguf", "mmproj": "vision.gguf", "chat_handler": "Gemma4"})
+                self.call_process(**kwargs)
+                llm = self.nodes.LLAMA_CPP_STORAGE.llm
+                self.assertEqual(llm.calls, 2)
+                self.assertEqual(llm.requests[0]["messages"][0]["content"][1]["type"], "image_url")
+                self.assertFalse(any(item["type"] == "image_url" for item in llm.requests[1]["messages"][-1]["content"]))
+                self.call_process(**kwargs, custom_prompt="walk to the left", seed=5678)
+                self.assertEqual(llm.calls, 3)
+                self.assertIn("walk to the left", str(llm.requests[-1]))
+                self.assertIn("prompt-1", str(llm.requests[-1]))
+                self.nodes.LLAMA_CPP_STORAGE.output_cache.clear()
+                self.nodes.LLAMA_CPP_STORAGE.llm = FakeLLM()
+                self.call_process(**kwargs, custom_prompt="wave")
+                llm = self.nodes.LLAMA_CPP_STORAGE.llm
+                self.assertEqual(llm.calls, 1)
+                encode.return_value = "image-two"
+                self.call_process(**kwargs, custom_prompt="jump")
+                self.assertEqual(llm.calls, 3)
+                (root / "LLM" / "model.gguf").write_bytes(b"changed-model")
+                self.call_process(**kwargs, custom_prompt="sit down")
+                self.assertEqual(llm.calls, 5)
+                self.assertEqual(len(list((root / "cache").glob("*.json"))), 3)
+                self.call_process(**kwargs, custom_prompt="look up", save_states=True)
+                self.call_process(**kwargs, custom_prompt="look down", save_states=True)
+                self.assertEqual(llm.calls, 7)
+                history = self.nodes.LLAMA_CPP_STORAGE.messages["42"]
+                self.assertFalse(any(item["type"] == "image_url" for msg in history if isinstance(msg.get("content"), list) for item in msg["content"]))
+                self.call_process(**{**kwargs, "cache_image_analysis": False}, custom_prompt="look down")
+                self.assertEqual(llm.calls, 8)
+                self.assertTrue(any(item["type"] == "image_url" for item in llm.requests[-1]["messages"][-1]["content"]))
+
 
     def test_identical_stateless_call_reuses_cached_output(self):
         first = self.call_process()

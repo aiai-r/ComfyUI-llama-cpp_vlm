@@ -66,6 +66,7 @@ def make_instruct_cache_key(
     parameters,
     output_think_block,
     images,
+    cache_image_analysis=False,
 ):
     payload = {
         "llama_model": _stable_plain(llama_model),
@@ -79,6 +80,7 @@ def make_instruct_cache_key(
         "parameters": _stable_plain(parameters),
         "output_think_block": bool(output_think_block),
         "images": fingerprint_images(images),
+        "cache_image_analysis": cache_image_analysis,
     }
     encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

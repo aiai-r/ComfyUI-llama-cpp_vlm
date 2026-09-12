@@ -1,3 +1,9 @@
+## Persistent image analysis
+
+Enable `cache_image_analysis` on `Llama-cpp Instruct` to describe each image once and save the description under `cache/image_analysis/`. Later runs use the saved text plus your current instructions, including after a restart. Images are not attached to the final prompt-generation call. Details omitted from the description will therefore not be available to that call.
+
+The key includes image content, model configuration, model/projector file metadata, and the analysis prompt version. Changing instructions or generation seed does not repeat image analysis. Delete the corresponding cache files and change the generation seed to refresh descriptions; disable the option to return to direct image prompting. With the option disabled (the default), existing workflows retain their behavior. Cache files contain image descriptions and are excluded from Git.
+
 This fork has two main features:
 
 1. When using a Gemma4 GGUF vision model to reverse-prompt images, you can choose whether to output think/reasoning content. By default, it is hidden.

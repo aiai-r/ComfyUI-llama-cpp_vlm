@@ -13,6 +13,7 @@ from .support.cqdm import cqdm
 from .support.gguf_layers import get_layer_count
 from .support.prompt_enhancer_preset import *
 from .support.thinking_cleanup import clean_thinking_text
+from .support.image_analysis_cache import cached_image_messages
 from .support.output_cache import (
     get_cached_instruct_output,
     make_instruct_cache_key,
@@ -494,6 +495,7 @@ class llama_cpp_instruct_adv:
                 "parameters": ("LLAMACPPARAMS",),
                 "images": ("IMAGE",),
                 "queue_handler": (any_type, {"tooltip": "Used to control the execution order of instruct nodes."}),
+                "cache_image_analysis": ("BOOLEAN", {"default": False, "tooltip": "Save image descriptions to disk and reuse them when instructions change. Prompt generation receives descriptions instead of images."}),
             },
             
         }
@@ -518,7 +520,7 @@ class llama_cpp_instruct_adv:
                         item["image_url"]["url"] = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAsTAAALEwEAmpwYAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC"
         return clean_messages
     
-    def process(self, llama_model, preset_prompt, custom_prompt, system_prompt, inference_mode, max_frames, max_size, seed, force_offload, save_states, 输出think块, unique_id, parameters=None, images=None, queue_handler=None):
+    def process(self, llama_model, preset_prompt, custom_prompt, system_prompt, inference_mode, max_frames, max_size, seed, force_offload, save_states, 输出think块, unique_id, parameters=None, images=None, queue_handler=None, cache_image_analysis=False):
         if parameters is None:
             parameters = {}
         else:
@@ -546,6 +548,7 @@ class llama_cpp_instruct_adv:
                 parameters=_parameters,
                 output_think_block=输出think块,
                 images=images,
+                cache_image_analysis=cache_image_analysis,
             )
             cached_output = get_cached_instruct_output(LLAMA_CPP_STORAGE.output_cache, uid, cache_key)
             if cached_output is not None:
@@ -558,6 +561,20 @@ class llama_cpp_instruct_adv:
             LLAMA_CPP_STORAGE.load_model(llama_model)
             #raise RuntimeError("The model has been unloaded or failed to load!")
         
+        completed_messages = None
+
+        def complete(messages):
+            nonlocal completed_messages
+            if cache_image_analysis and images is not None:
+                model_identity = {"config": llama_model, "files": []}
+                for name in ("model", "mmproj"):
+                    path = os.path.join(folder_paths.models_dir, "LLM", llama_model[name])
+                    stat = os.stat(path)
+                    model_identity["files"].append([os.path.abspath(path), stat.st_size, stat.st_mtime_ns])
+                messages = cached_image_messages(LLAMA_CPP_STORAGE.llm, messages, model_identity)
+            completed_messages = messages
+            return LLAMA_CPP_STORAGE.llm.create_chat_completion(messages=messages, seed=seed, **_parameters)
+
         last_sys_prompt = LLAMA_CPP_STORAGE.sys_prompts.get(f"{uid}", None)
         video_input = inference_mode == "video"
         system_prompts = "请将输入的图片序列当做视频而不是静态帧序列, " + system_prompt if video_input else system_prompt
@@ -613,7 +630,7 @@ class llama_cpp_instruct_adv:
                         if item.get("type") == "image_url":
                             item["image_url"]["url"] = f"data:image/jpeg;base64,{data}"
                             break
-                    output = LLAMA_CPP_STORAGE.llm.create_chat_completion(messages=messages, seed=seed, **_parameters)
+                    output = complete(messages)
                     text = output['choices'][0]['message']['content'].removeprefix(": ").lstrip()
                     text = clean_thinking_text(text, output_think_block=bool(输出think块))
                     out2.append(text)
@@ -635,13 +652,13 @@ class llama_cpp_instruct_adv:
                     user_content.append(image_content)
                     
                 messages.append({"role": "user", "content": user_content})
-                output = LLAMA_CPP_STORAGE.llm.create_chat_completion(messages=messages, seed=seed, **_parameters)
+                output = complete(messages)
                 out1 = output['choices'][0]['message']['content'].removeprefix(": ").lstrip()
                 out1 = clean_thinking_text(out1, output_think_block=bool(输出think块))
                 out2 = [out1]
         else:
             messages.append({"role": "user", "content": user_content})
-            output = LLAMA_CPP_STORAGE.llm.create_chat_completion(messages=messages, seed=seed, **_parameters)
+            output = complete(messages)
             out1 = output['choices'][0]['message']['content'].removeprefix(": ").lstrip()
             out1 = clean_thinking_text(out1, output_think_block=bool(输出think块))
             out2 = [out1]
@@ -649,6 +666,7 @@ class llama_cpp_instruct_adv:
         if save_states:
             print(f"[llama-cpp_vlm] Saving state id={uid}...")
             #LLAMA_CPP_STORAGE.states[f"{uid}"] = LLAMA_CPP_STORAGE.llm.save_state()
+            messages = completed_messages
             messages.append({"role": "assistant", "content": out1})
             clear_message = self.sanitize_messages(messages)
             LLAMA_CPP_STORAGE.messages[f"{uid}"] = clear_message
