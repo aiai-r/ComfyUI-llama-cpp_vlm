@@ -587,7 +587,7 @@ class llama_cpp_instruct_adv:
             user_content.append({"type": "text", "text": p})
             
         if images is not None:
-            if not hasattr(LLAMA_CPP_STORAGE.chat_handler, "clip_model_path") or LLAMA_CPP_STORAGE.chat_handler.clip_model_path is None:
+            if not llama_model["mmproj"] or llama_model["mmproj"] == "None":
                  raise ValueError("Image input detected, but the loaded model is not configured with a mmproj module.")
                 
             frames = images
