@@ -52,7 +52,7 @@ repeat_penalty: 1.1
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/redpigirl214/ComfyUI-llama-cpp_vlm.git
+git clone https://github.com/aiai-r/ComfyUI-llama-cpp_vlm.git
 ```
 
 如果你的 ComfyUI 环境已经能正常运行原版插件，一般不建议随意重装依赖。

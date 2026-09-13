@@ -58,7 +58,7 @@ Clone this fork into ComfyUI `custom_nodes`:
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/redpigirl214/ComfyUI-llama-cpp_vlm.git
+git clone https://github.com/aiai-r/ComfyUI-llama-cpp_vlm.git
 ```
 
 If your ComfyUI environment already runs the original plugin correctly, avoid reinstalling dependencies casually.

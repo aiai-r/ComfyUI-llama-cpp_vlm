@@ -155,6 +155,7 @@ class InstructCacheBehaviorTests(unittest.TestCase):
 
     def test_image_analysis_survives_new_model_and_instruction_changes(self):
         class FakeImage:
+            ndim = 3
             def cpu(self): return self
             def numpy(self): return self
             def squeeze(self): return self
@@ -171,6 +172,8 @@ class InstructCacheBehaviorTests(unittest.TestCase):
             with patch.object(cache_module, "CACHE_DIR", root / "cache"), patch.object(self.nodes.folder_paths, "models_dir", str(root)), patch.object(self.nodes, "image2base64", return_value="image-one") as encode:
                 kwargs = dict(images=[image], inference_mode="images", cache_image_analysis=True,
                               llama_model={"model": "model.gguf", "mmproj": "vision.gguf", "chat_handler": "Gemma4"})
+                self.nodes.LLAMA_CPP_STORAGE.current_config = kwargs["llama_model"]
+                self.nodes.LLAMA_CPP_STORAGE.chat_handler = object()
                 self.call_process(**kwargs)
                 llm = self.nodes.LLAMA_CPP_STORAGE.llm
                 self.assertEqual(llm.calls, 2)
@@ -255,6 +258,47 @@ class InstructCacheBehaviorTests(unittest.TestCase):
         self.assertEqual(second, ("prompt-2", ["prompt-2"], "42"))
         self.assertEqual(self.nodes.LLAMA_CPP_STORAGE.llm.calls, 2)
 
+    def test_comfyui_list_inputs_preserve_prompts_and_false_toggles(self):
+        result = self.call_process(
+            llama_model=[{"model": "model.gguf", "mmproj": "None", "chat_handler": "None"}],
+            preset_prompt=["Normal - Describe"], custom_prompt=["Write the target video prompt."],
+            system_prompt=["Begin with For the target video."], inference_mode=["images"],
+            max_frames=[24], max_size=[256], seed=[1234], force_offload=[False],
+            save_states=[False], 输出think块=[False], unique_id=["node.42"],
+            parameters=[{"temperature": 0.6}], cache_image_analysis=[False],
+        )
+        request = self.nodes.LLAMA_CPP_STORAGE.llm.requests[-1]
+        self.assertEqual(result[2], "42")
+        self.assertEqual(request["messages"][0]["content"], "Begin with For the target video.")
+        self.assertEqual(request["messages"][1]["content"][0]["text"], "Write the target video prompt.")
+        self.assertEqual(request["temperature"], 0.6)
+        self.assertEqual(request["seed"], 1234)
+
+    def test_list_image_modes_preserve_groups_and_clean_thinking(self):
+        class Frame:
+            ndim = 3
+
+        class Batch:
+            ndim = 4
+            shape = (2, 4, 4, 3)
+            def __getitem__(self, index):
+                return Frame()
+
+        config = {"model": "model.gguf", "mmproj": "vision.gguf", "chat_handler": "Gemma4"}
+        self.nodes.LLAMA_CPP_STORAGE.current_config = config
+        self.nodes.LLAMA_CPP_STORAGE.chat_handler = object()
+        expected = {"one by one": [2, 2], "images": [4], "video": [2, 2]}
+        for mode, counts in expected.items():
+            with self.subTest(mode=mode), patch.object(self.nodes, "scale_image", return_value="pixels"), patch.object(self.nodes, "image2base64", return_value="image"):
+                llm = self.nodes.LLAMA_CPP_STORAGE.llm
+                with patch.object(llm, "create_chat_completion", return_value={"choices": [{"message": {"content": "<think>analysis</think>For the target video."}}]}) as complete:
+                    result = self.call_process(llama_model=config, images=[Batch(), Batch()], inference_mode=mode)
+                    self.assertEqual(complete.call_count, len(counts))
+                    for call, count in zip(complete.call_args_list, counts):
+                        content = call.kwargs["messages"][-1]["content"]
+                        self.assertEqual(sum(item["type"] == "image_url" for item in content), count)
+                    self.assertEqual(result[1], ["For the target video."] * len(counts))
+
 
 class ModelLoaderChangeFingerprintTests(unittest.TestCase):
     @classmethod
@@ -291,6 +335,7 @@ class ModelLoaderChangeFingerprintTests(unittest.TestCase):
         self.assertNotEqual(base, self.fingerprint(model="other-model.gguf"))
         self.assertNotEqual(base, self.fingerprint(n_ctx=4096))
         self.assertNotEqual(base, self.fingerprint(启用思考=True))
+        self.assertNotEqual(base, self.fingerprint(load_mtp=True))
 
 
 class ComfyUICacheControlTests(unittest.TestCase):
