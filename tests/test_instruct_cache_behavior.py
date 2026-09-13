@@ -153,6 +153,31 @@ class InstructCacheBehaviorTests(unittest.TestCase):
         data.update(overrides)
         return self.node.process(**data)
 
+    def test_image_tensor_list_preserves_all_images_and_order(self):
+        class FakeBatch:
+            ndim = 4
+            shape = (1, 8, 8, 3)
+
+            def __init__(self, frame):
+                self.frame = frame
+
+            def __getitem__(self, index):
+                return self.frame
+
+        batches = [FakeBatch(f"image-{i}") for i in range(9)]
+        model = {"model": "model.gguf", "mmproj": "vision.gguf", "chat_handler": "Gemma4"}
+        self.nodes.LLAMA_CPP_STORAGE.current_config = model
+        self.nodes.LLAMA_CPP_STORAGE.chat_handler = object()
+        with patch.object(self.nodes, "scale_image", side_effect=lambda frame, size: frame), patch.object(self.nodes, "image2base64", side_effect=lambda frame: frame):
+            self.call_process(images=[batches], inference_mode="images", llama_model=model)
+            llm = self.nodes.LLAMA_CPP_STORAGE.llm
+            self.assertEqual(llm.calls, 1)
+            content = llm.requests[0]["messages"][-1]["content"]
+            urls = [item["image_url"]["url"] for item in content if item["type"] == "image_url"]
+            self.assertEqual(urls, [f"data:image/jpeg;base64,image-{i}" for i in range(9)])
+            self.call_process(images=batches, inference_mode="images", llama_model=model)
+            self.assertEqual(llm.calls, 1)
+
     def test_image_analysis_survives_new_model_and_instruction_changes(self):
         class FakeImage:
             ndim = 3

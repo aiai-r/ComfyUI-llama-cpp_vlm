@@ -621,6 +621,9 @@ class llama_cpp_instruct_adv:
         cache_image_analysis = cache_image_analysis[0] if isinstance(cache_image_analysis, list) else cache_image_analysis
         if images is not None and not isinstance(images, list):
             images = [images]
+        if images is not None:
+            # ImageTensorList outputs arrive wrapped by INPUT_IS_LIST.
+            images = [image for item in images for image in (item if isinstance(item, list) else [item])]
 
         if parameters is None:
             parameters = {}
