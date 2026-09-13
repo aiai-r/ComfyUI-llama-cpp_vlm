@@ -326,6 +326,10 @@ class LLAMA_CPP_STORAGE:
             "n_ctx": n_ctx,
             "verbose": False,
         }
+        if chat_handler == "Gemma4" and mmproj and mmproj != "None":
+            # Non-causal image attention cannot split a decode batch into microbatches.
+            batch_size = min(n_ctx, max(2048, image_min_tokens, image_max_tokens))
+            kwargs.update(n_batch=batch_size, n_ubatch=batch_size)
         if "load_mtp" in inspect.signature(Llama.__init__).parameters:
             kwargs["load_mtp"] = load_mtp
         else:
