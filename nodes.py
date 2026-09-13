@@ -278,7 +278,18 @@ class LLAMA_CPP_STORAGE:
         
         print(f"[llama-cpp_vlm] Loading model: {model}")
         print(f"[llama-cpp_vlm] n_gpu_layers = {n_gpu_layers}")
-        cls.llm = Llama(model_path, chat_handler=cls.chat_handler, n_gpu_layers=n_gpu_layers, n_ctx=n_ctx, verbose=False)
+        kwargs = {
+            "model_path": model_path,
+            "chat_handler": cls.chat_handler,
+            "n_gpu_layers": n_gpu_layers,
+            "n_ctx": n_ctx,
+            "verbose": False,
+        }
+        if chat_handler == "Gemma4" and mmproj and mmproj != "None":
+            # Non-causal image attention cannot split a decode batch into microbatches.
+            batch_size = min(n_ctx, max(2048, image_min_tokens, image_max_tokens))
+            kwargs.update(n_batch=batch_size, n_ubatch=batch_size)
+        cls.llm = Llama(**kwargs)
 
 any_type = AnyType("*")
 
